@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+_cache/
+figs/
+.ipynb_checkpoints/
+*.csv
+*.pkl
+!examples/**/*.csv
+dist/
+
+# Kept local, not published
+whitepaper/
+presentation/
+notebooks/
+
+# OS / build / environments
+.DS_Store
+build/
+.venv/
+venv/
