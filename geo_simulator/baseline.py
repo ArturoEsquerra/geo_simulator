@@ -69,10 +69,10 @@ def simulate_latent(
     market = np.log1p(config.annual_growth) * years + random_walk(rng, n_days, config.market_volatility)
     factors = np.stack([random_walk(rng, n_days, config.factor_volatility)
                         for _ in range(config.n_factors)]) if config.n_factors else np.zeros((0, n_days))
-    doy = 2 * np.pi * dates.dayofyear.to_numpy() / 365.25
+    doy = 2 * np.pi * dates.day_of_year.to_numpy() / 365.25
     yearly = config.yearly_amplitude * (np.sin(doy + phase) + 0.3 * np.sin(2 * doy + 2 * phase))
     weekly = np.log(np.asarray(config.weekly_pattern, float) / np.mean(config.weekly_pattern))
-    day_of_week = weekly[dates.dayofweek.to_numpy()]
+    day_of_week = weekly[dates.day_of_week.to_numpy()]
     shocks = np.zeros(n_days)
     for when, multiplier in config.shocks:
         hit = dates == pd.Timestamp(when)

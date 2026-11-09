@@ -43,8 +43,13 @@ class GeographyConfig:
             offline work, for countries GeoNames does not cover, or to pin an
             exact geography snapshot (``result.geography``) for reproducibility.
         custom_clusters: For ``geo_grain="cluster"``: your own zip -> unit
-            mapping (e.g. Nielsen DMAs) as a DataFrame with columns ``zip``
-            and ``geo``. Replaces the built-in k-means clusters.
+            mapping as a DataFrame with columns ``zip`` and ``geo`` (and
+            optionally ``country``). Replaces the built-in k-means clusters.
+            For Google GMA files (``PostCode, CountryCode, Gma, GeoName``)
+            use ``load_gma_mapping(path)``; Nielsen DMAs work the same way.
+            Leading zeros lost in spreadsheets are restored, and populated
+            zips missing from the mapping join the unit of the nearest
+            mapped zip (``result.membership["source"]`` says which).
         cluster_seed: Seed of the k-means initialisation for the built-in
             clusters. Independent of the simulation seed, so clusters stay
             fixed across simulations.

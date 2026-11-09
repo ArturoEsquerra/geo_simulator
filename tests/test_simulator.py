@@ -25,7 +25,8 @@ from geo_simulator import (
 )
 from geo_simulator.calibration import noise_for_granularity
 from geo_simulator.diagnostics import cointegration_report, pre_period_fit
-from geo_simulator.geography import aggregate_geography, cluster_membership
+from geo_simulator.geography import (aggregate_geography, align_custom_clusters, cluster_membership,
+                                     load_gma_mapping)
 from geo_simulator.lift import ramp_profile
 
 
@@ -319,6 +320,39 @@ def test_cluster_membership_aggregates_without_losing_population():
     pd.testing.assert_frame_equal(membership, cluster_membership(zips, n_clusters=6, seed=0))
 
 
+def toy_gma(zips):
+    """A GMA-style file for the toy geography: 4 GMAs, numeric PostCodes, two zips left out."""
+    rows = zips.iloc[:-2].assign(state_no=lambda d: d["state"].str[-2:].astype(int))
+    return pd.DataFrame({"PostCode": rows["geo"].astype(int), "CountryCode": "XX",
+                         "Gma": 100 + rows["state_no"] % 4, "GeoName": "Market " + (rows["state_no"] % 4).astype(str)})
+
+
+def test_load_gma_mapping_and_alignment():
+    zips = toy_geography()
+    gma = pd.concat([toy_gma(zips), pd.DataFrame({"PostCode": [99999], "CountryCode": ["ZZ"], "Gma": [1],
+                                                  "GeoName": ["Elsewhere"]})])
+    mapping = load_gma_mapping(gma, country="XX")
+    assert list(mapping.columns) == ["zip", "geo", "gma", "country"] and mapping["geo"].nunique() == 4
+    aligned = align_custom_clusters(zips, mapping, "XX")
+    assert len(aligned) == len(zips) and aligned["geo"].notna().all()
+    assert (aligned["source"] == "nearest").sum() == 2          # the two zips missing from the file
+    assert aligned.loc[aligned["zip"] == "00000", "source"].item() == "mapping"  # leading zeros restored
+    units = aggregate_geography(zips, aligned)
+    assert units["population"].sum() == pytest.approx(zips["population"].sum())
+
+
+def test_gma_names_shared_by_two_ids_stay_distinct():
+    gma = pd.DataFrame({"PostCode": ["1", "2", "3"], "CountryCode": "XX", "Gma": ["7", "8", "9"],
+                        "GeoName": ["Springfield", "Springfield", ""]})
+    mapping = load_gma_mapping(gma)
+    assert sorted(mapping["geo"]) == ["(9)", "Springfield (7)", "Springfield (8)"]
+
+
+def test_gma_missing_columns_raises():
+    with pytest.raises(ValueError, match="missing columns"):
+        load_gma_mapping(pd.DataFrame({"PostCode": [1], "Gma": [1]}))
+
+
 # ---------------------------------------------------------------------------
 # Contamination
 # ---------------------------------------------------------------------------
@@ -460,6 +494,14 @@ def test_geonames_us_states_and_clusters():
     _, clusters, membership = build_geography("US", "cluster", GeographyConfig(), n_clusters=100)
     assert len(clusters) == 100 and set(membership["zip"]) == set(zips["geo"])
     assert clusters["population"].sum() == pytest.approx(zips["population"].sum())
+
+    # A GMA-style file covering only part of the zips: population is preserved.
+    gma = pd.DataFrame({"PostCode": membership["zip"].astype(int), "CountryCode": "US",
+                        "Gma": pd.factorize(membership["geo"])[0], "GeoName": membership["geo"]}).iloc[::2]
+    cfg = GeographyConfig(custom_clusters=load_gma_mapping(gma))
+    _, gma_units, gma_membership = build_geography("US", "cluster", cfg)
+    assert gma_units["population"].sum() == pytest.approx(zips["population"].sum())
+    assert set(gma_membership["source"]) == {"mapping", "nearest"}
 
 
 @pytest.mark.skipif(not os.environ.get("GEO_SIM_NETWORK"), reason="set GEO_SIM_NETWORK=1 to download GeoNames")

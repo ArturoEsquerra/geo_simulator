@@ -84,8 +84,8 @@ class GeoSimulator:
         # 2. Calendar ---------------------------------------------------------
         days_per_period = 7 if cfg.granularity == "week" else 1
         start = pd.Timestamp(cfg.start_date)
-        if cfg.granularity == "week" and start.dayofweek != 0:
-            monday = start - pd.Timedelta(days=start.dayofweek)
+        if cfg.granularity == "week" and start.day_of_week != 0:
+            monday = start - pd.Timedelta(days=start.day_of_week)
             logger.warning("start_date %s is not a Monday; weekly data starts on %s.", start.date(), monday.date())
             start = monday
         days = pd.date_range(start, periods=cfg.n_periods * days_per_period, freq="D")

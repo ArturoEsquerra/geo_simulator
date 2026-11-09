@@ -147,7 +147,7 @@ def calibrate(config: CalibrationConfig, base: BaselineConfig = None, noise: Noi
     # 1. Day of week ----------------------------------------------------------
     weekly_pattern = base.weekly_pattern
     if granularity == "day":
-        dow = dates.dayofweek.to_numpy()
+        dow = dates.day_of_week.to_numpy()
         effect = np.array([logs[:, dow == d].mean() for d in range(7)])
         effect -= effect.mean()
         logs = logs - effect[dow][None, :]
@@ -162,7 +162,7 @@ def calibrate(config: CalibrationConfig, base: BaselineConfig = None, noise: Noi
     has_year = days[-1] >= 364
     design = [np.ones_like(years), years]
     if has_year:
-        doy = 2 * np.pi * dates.dayofyear.to_numpy() / 365.25
+        doy = 2 * np.pi * dates.day_of_year.to_numpy() / 365.25
         design += [np.sin(doy), np.cos(doy)]
     design = np.column_stack(design)
     coef, *_ = np.linalg.lstsq(design, market, rcond=None)

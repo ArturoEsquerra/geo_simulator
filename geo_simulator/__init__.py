@@ -28,10 +28,11 @@ from geo_simulator.config import (
     SimulationConfig,
     TreatmentConfig,
 )
+from geo_simulator.geography import load_gma_mapping
 from geo_simulator.simulator import GeoSimulator, SimulationResult
 
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "CalibrationConfig",
     "CalibrationResult",
     "calibrate",
+    "load_gma_mapping",
 ]

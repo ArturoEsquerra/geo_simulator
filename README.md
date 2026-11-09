@@ -169,6 +169,16 @@ Checked across US, MX, DE, ES, FR, GB, BR, IN and CO: full first-level coverage 
 
 Divisions with populated places but no postal codes become place-based units (`{CC}-{admin1}-{rank}`), and postal codes shared across provinces never merge them. The whitepaper (Section 10) and the deck report maps and a common-design study for each market: with ~15% of conversions treated for four weeks, the approximate minimum detectable lift is 3.1 pp in Mexico, 4.6 in Argentina, 4.9 in Colombia, 5.8 in Canada, 6.1 in Peru and 8.3 in Chile.
 
+### Your own units: Google GMAs, Nielsen DMAs
+
+```python
+from geo_simulator import load_gma_mapping, GeographyConfig
+gma = load_gma_mapping("gma.csv", country="US")      # columns: PostCode, CountryCode, Gma, GeoName
+cfg = SimulationConfig(country="US", geo_grain="cluster", geography=GeographyConfig(custom_clusters=gma))
+```
+
+`custom_clusters` takes any table with `zip` and `geo` columns. Leading zeros lost in spreadsheets are restored, and populated zips missing from the file join the unit of their nearest listed zip (`result.membership["source"]` records which).
+
 City models use the `n_cities` most populated places in `cities1000`, picked greedily from the largest and skipping any place within `city_min_distance_km` (25 km) of a city already picked. Each metro area therefore appears once (Brooklyn is not a separate geo from New York City). The metro is labelled and sized by its largest municipality (e.g. Zapopan for Guadalajara), not by its full agglomeration.
 
 ## Literature and existing tools

@@ -544,6 +544,96 @@ def cluster_membership(zips: pd.DataFrame, n_clusters: int, seed: int = 0, n_ite
     return pd.DataFrame({"zip": frame["geo"], "geo": frame["cluster"].map(label)})
 
 
+def load_gma_mapping(source, country: Optional[str] = None) -> pd.DataFrame:
+    """Read a Google GMA file into a zip -> unit mapping for ``custom_clusters``.
+
+    GMAs are Google's geo units for experiments (comparable to Nielsen DMAs,
+    built to limit contamination between units). The file has four columns:
+    ``PostCode``, ``CountryCode`` (e.g. ``US``), ``Gma`` (the unit id) and
+    ``GeoName`` (the unit's name).
+
+    Args:
+        source: Path to the CSV, or a DataFrame with those columns (any case).
+        country: Optional ISO alpha-2 code to keep (the file can hold several
+            countries). The simulator also filters by country on its own.
+
+    Returns:
+        DataFrame with ``zip``, ``geo`` (the GeoName; the Gma id is appended
+        when a name is shared by several GMAs or missing), ``gma`` and
+        ``country``. Pass it as ``GeographyConfig(custom_clusters=...)`` with
+        ``geo_grain="cluster"``.
+    """
+    raw = pd.read_csv(source, dtype=str, keep_default_na=False) if not isinstance(source, pd.DataFrame) else source.copy()
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    missing = {"postcode", "countrycode", "gma", "geoname"} - set(raw.columns)
+    if missing:
+        raise ValueError(f"GMA file is missing columns {sorted(missing)}; expected PostCode, CountryCode, Gma, GeoName.")
+    out = pd.DataFrame({
+        "zip": raw["postcode"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+        "country": raw["countrycode"].astype(str).str.strip().str.upper(),
+        "gma": raw["gma"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+        "name": raw["geoname"].astype(str).str.strip(),
+    })
+    out = out[(out["zip"] != "") & (out["gma"] != "")]
+    if country is not None:
+        out = out[out["country"] == country.strip().upper()]
+    if out.empty:
+        raise ValueError(f"No GMA rows left{'' if country is None else ' for country ' + country!r}.")
+    # One label per GMA: its name, made unique with the id when needed.
+    per_gma = out.groupby(["country", "gma"])["name"].agg(lambda n: n[n != ""].mode().iloc[0] if (n != "").any() else "")
+    labels = per_gma.reset_index()
+    shared = labels.duplicated(["country", "name"], keep=False) | (labels["name"] == "")
+    labels["geo"] = np.where(shared, (labels["name"] + " (" + labels["gma"] + ")").str.strip(), labels["name"])
+    out = out.merge(labels[["country", "gma", "geo"]], on=["country", "gma"])
+    return out.drop_duplicates(["country", "zip"])[["zip", "geo", "gma", "country"]].reset_index(drop=True)
+
+
+def align_custom_clusters(zips: pd.DataFrame, mapping: pd.DataFrame, country_code: Optional[str] = None) -> pd.DataFrame:
+    """Match a user zip -> unit mapping to the simulator's zip table.
+
+    * keeps the rows of ``country_code`` when the mapping has a ``country`` column;
+    * restores leading zeros lost by spreadsheets (``2134`` -> ``02134``) when
+      the country's codes are fixed-width digits;
+    * assigns populated zips that the mapping does not list to the unit of
+      the nearest listed zip, so no population is dropped.
+
+    Returns ``zip``, ``geo`` and ``source`` (``"mapping"`` or ``"nearest"``)
+    for every zip of ``zips``.
+    """
+    mapping = mapping.rename(columns=lambda c: str(c).strip().lower())
+    if not {"zip", "geo"} <= set(mapping.columns):
+        raise ValueError("custom_clusters needs columns 'zip' and 'geo' (see load_gma_mapping for GMA files).")
+    if country_code and "country" in mapping.columns:
+        mapping = mapping[mapping["country"].astype(str).str.upper() == country_code.upper()]
+    mapping = mapping[["zip", "geo"]].astype(str)
+    mapping["zip"] = mapping["zip"].str.strip()
+
+    ours = zips["geo"]
+    widths = ours.str.len().unique()
+    if len(widths) == 1 and ours.str.isdigit().all():
+        short = mapping["zip"].str.isdigit() & (mapping["zip"].str.len() < widths[0])
+        mapping.loc[short, "zip"] = mapping.loc[short, "zip"].str.zfill(int(widths[0]))
+    else:  # alphanumeric codes: compare without spaces, upper case
+        key = lambda s: s.str.replace(" ", "", regex=False).str.upper()
+        lookup = dict(zip(key(ours), ours))
+        mapping["zip"] = key(mapping["zip"]).map(lookup).fillna(mapping["zip"])
+    mapping = mapping.drop_duplicates("zip")
+
+    out = zips[["geo", "latitude", "longitude"]].rename(columns={"geo": "zip"}).merge(mapping, on="zip", how="left")
+    matched = out["geo"].notna().to_numpy()
+    if not matched.any():
+        raise ValueError("The zip -> geo mapping matches none of the simulator's zip codes "
+                         f"(e.g. ours: {ours.head(3).tolist()}, yours: {mapping['zip'].head(3).tolist()}).")
+    out["source"] = np.where(matched, "mapping", "nearest")
+    if (~matched).any():
+        xyz = _unit_vectors(out["latitude"], out["longitude"])
+        _, nearest = cKDTree(xyz[matched]).query(xyz[~matched])
+        out.loc[~matched, "geo"] = out.loc[matched, "geo"].to_numpy()[nearest]
+        logger.info("custom_clusters: %d of %d populated zips were not in the mapping and joined their nearest "
+                    "mapped zip's unit.", int((~matched).sum()), len(out))
+    return out[["zip", "geo", "source"]]
+
+
 def build_geography(country: str, grain: str, config: GeographyConfig, n_cities: int = 50,
                     n_clusters: int = 200) -> tuple[str, pd.DataFrame, Optional[pd.DataFrame]]:
     """Return ``(country_code, units, membership)``.
@@ -563,7 +653,7 @@ def build_geography(country: str, grain: str, config: GeographyConfig, n_cities:
     if grain == "state":
         membership = state_membership(zips)
     elif config.custom_clusters is not None:
-        membership = config.custom_clusters.rename(columns=str.lower)[["zip", "geo"]].astype(str)
+        membership = align_custom_clusters(zips, config.custom_clusters, code)
     else:
         membership = cluster_membership(zips, n_clusters, seed=config.cluster_seed)
     units = finalize_geography(aggregate_geography(zips, membership), dataclasses.replace(
